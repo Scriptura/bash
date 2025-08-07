@@ -33,11 +33,11 @@ Script Bash d’installation automatisée d’un environnement F#/ASP.NET Core +
    ./dotnet-fsharp-pg.sh
    ```
 
-   - Mode production :  
+   - Mode production :
      ```bash
      ./dotnet-fsharp-pg.sh --production
      ```
-   - Utiliser les dépôts Microsoft pour .NET :  
+   - Utiliser les dépôts Microsoft pour .NET (méthode recommandée : mise à jour via apt, intégration système, désinstallation propre) :
      ```bash
      ./dotnet-fsharp-pg.sh --repo-method
      ```
@@ -54,7 +54,7 @@ Script Bash d’installation automatisée d’un environnement F#/ASP.NET Core +
 
 ## Informations de connexion
 
-- Les mots de passe PostgreSQL sont générés et stockés dans :  
+- Les mots de passe PostgreSQL sont générés et stockés dans :
   `~/.fsharp-aspnet-credentials`
 - Fichier `.pgpass` créé pour la connexion automatique avec `psql`.
 
@@ -84,4 +84,4 @@ Script Bash d’installation automatisée d’un environnement F#/ASP.NET Core +
 
 ---
 
-_Auteur : Assistant Claude / GitHub Copilot_
+_Auteur : Olivier Chavarin_

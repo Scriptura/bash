@@ -20,9 +20,10 @@
 # - Stockage sécurisé des credentials (.pgpass + fichier référence)
 # - Logging horodaté et nettoyage automatique des fichiers temporaires
 #
-# Auteur: Assistant Claude
+# Auteur: Olivier Chavarin
 # Version: 7.0
 
+set -x
 set -euo pipefail
 
 # Couleurs pour les messages
@@ -42,7 +43,9 @@ cleanup() {
 }
 
 # Gestion des signaux
-trap 'error "Installation interrompue"; cleanup; exit 1' INT TERM EXIT
+# trap 'error "Installation interrompue"; cleanup; exit 1' INT TERM EXIT
+trap 'error "Installation interrompue"; cleanup; exit 1' ERR
+trap 'cleanup' EXIT
 
 # Fonction de logging améliorée
 log() {
@@ -406,6 +409,7 @@ configure_postgresql_ubuntu_specific() {
     # Ubuntu utilise le répertoire standard /etc/postgresql/
     PG_CONFIG_DIR="/etc/postgresql/$PG_VERSION/main"
     PG_DATA_DIR="/var/lib/postgresql/$PG_VERSION/main"
+    LOCAL_USER="$(whoami)"
     
     # Génération de mots de passe sécurisés
     generate_postgresql_passwords
@@ -423,9 +427,9 @@ configure_postgresql_ubuntu_specific() {
     sudo tee -a $PG_CONFIG_DIR/pg_hba.conf > /dev/null <<EOF
 
 # Configuration pour développement F#/ASP.NET Core (sécurisée)
-local   testdb          $USER                                   md5
-host    testdb          $USER           127.0.0.1/32            md5
-host    testdb          $USER           ::1/128                 md5
+local   testdb          $LOCAL_USER                                   md5
+host    testdb          $LOCAL_USER           127.0.0.1/32            md5
+host    testdb          $LOCAL_USER           ::1/128                 md5
 EOF
 }
 
@@ -435,6 +439,7 @@ configure_postgresql_debian_specific() {
     
     # Debian utilise pg_ctlcluster et une structure différente
     PG_CONFIG_DIR="/etc/postgresql/$PG_VERSION/main"
+    LOCAL_USER="$(whoami)"
     
     # Sur Debian, utilisation de pg_ctlcluster
     sudo pg_ctlcluster $PG_VERSION main start || true
@@ -455,9 +460,9 @@ configure_postgresql_debian_specific() {
     sudo tee -a $PG_CONFIG_DIR/pg_hba.conf > /dev/null <<EOF
 
 # Configuration pour développement F#/ASP.NET Core (Debian - sécurisée)
-local   testdb          $USER                                   md5
-host    testdb          $USER           127.0.0.1/32            md5
-host    testdb          $USER           ::1/128                 md5
+local   testdb          $LOCAL_USER                                   md5
+host    testdb          $LOCAL_USER           127.0.0.1/32            md5
+host    testdb          $LOCAL_USER           ::1/128                 md5
 EOF
 
     # Redémarrage avec pg_ctlcluster
@@ -469,26 +474,36 @@ generate_postgresql_passwords() {
     # Génération de mots de passe aléatoires forts
     PG_ADMIN_PASS=$(tr -dc 'A-Za-z0-9!@#$%^&*' </dev/urandom | head -c 32)
     APP_USER_PASS=$(tr -dc 'A-Za-z0-9!@#$%^&*' </dev/urandom | head -c 32)
+
+    LOCAL_USER="$(whoami)"
+
+    log "HOME=$HOME, LOCAL_USER=$LOCAL_USER"
     
     # Stockage sécurisé des mots de passe
     PGPASS_FILE="$HOME/.pgpass"
+    CREDENTIALS_FILE="$HOME/.fsharp-aspnet-credentials"
     
     # Création du fichier .pgpass pour l'utilisateur courant
+    log "Création du fichier .pgpass si nécessaire"
     if [[ ! -f "$PGPASS_FILE" ]]; then
         touch "$PGPASS_FILE"
-        chmod 600 "$PGPASS_FILE"
     fi
+    log "Avant chmod .pgpass"
+    chmod 600 "$PGPASS_FILE"
     
     # Ajout des mots de passe (format: hostname:port:database:username:password)
+    log "Ajout du mot de passe admin dans .pgpass"
     if ! grep -q "localhost:5432:\*:postgres:" "$PGPASS_FILE"; then
         echo "localhost:5432:*:postgres:$PG_ADMIN_PASS" >> "$PGPASS_FILE"
     fi
     
-    if ! grep -q "localhost:5432:testdb:$USER:" "$PGPASS_FILE"; then
-        echo "localhost:5432:testdb:$USER:$APP_USER_PASS" >> "$PGPASS_FILE"
+    log "Ajout du mot de passe utilisateur dans .pgpass"
+    if ! grep -q "localhost:5432:testdb:$LOCAL_USER:" "$PGPASS_FILE"; then
+        echo "localhost:5432:testdb:$LOCAL_USER:$APP_USER_PASS" >> "$PGPASS_FILE"
     fi
     
     # Sauvegarde des mots de passe dans un fichier séparé pour référence
+    log "Avant cat credentials"
     CREDENTIALS_FILE="$HOME/.fsharp-aspnet-credentials"
     cat > "$CREDENTIALS_FILE" <<EOF
 # Informations de connexion PostgreSQL générées automatiquement
@@ -499,15 +514,15 @@ generate_postgresql_passwords() {
 #   Mot de passe: $PG_ADMIN_PASS
 #
 # Utilisateur développement:
-#   Utilisateur: $USER
+#   Utilisateur: $LOCAL_USER
 #   Mot de passe: $APP_USER_PASS
 #   Base de données: testdb
 #
 # Chaîne de connexion ASP.NET Core:
-# "Host=localhost;Database=testdb;Username=$USER;Password=$APP_USER_PASS"
+# "Host=localhost;Database=testdb;Username=$LOCAL_USER;Password=$APP_USER_PASS"
 #
 # Commande de connexion psql:
-# PGPASSWORD='$APP_USER_PASS' psql -h localhost -U $USER -d testdb
+# PGPASSWORD='$APP_USER_PASS' psql -h localhost -U $LOCAL_USER -d testdb
 EOF
     
     chmod 600 "$CREDENTIALS_FILE"
@@ -518,7 +533,9 @@ EOF
 # Configuration pour le développement
 configure_postgresql_for_development() {
     log "Configuration PostgreSQL pour le développement..."
-    
+
+    LOCAL_USER="$(whoami)"
+
     # Création d'une base de données de test (idempotent)
     if ! sudo -u postgres psql -lqt | cut -d \| -f 1 | grep -qw testdb; then
         log "Création de la base de données 'testdb'..."
@@ -526,21 +543,21 @@ configure_postgresql_for_development() {
     else
         log "Base de données 'testdb' existe déjà"
     fi
-    
+
     # Création d'un utilisateur de développement avec mot de passe sécurisé (idempotent)
-    if ! sudo -u postgres psql -t -c "SELECT 1 FROM pg_user WHERE usename='$USER'" | grep -q 1; then
-        log "Création de l'utilisateur PostgreSQL '$USER'..."
-        sudo -u postgres psql -c "CREATE USER $USER WITH CREATEDB PASSWORD '$APP_USER_PASS';"
+    if ! sudo -u postgres psql -t -c "SELECT 1 FROM pg_user WHERE usename='$LOCAL_USER'" | grep -q 1; then
+        log "Création de l'utilisateur PostgreSQL '$LOCAL_USER'..."
+        sudo -u postgres psql -c "CREATE USER $LOCAL_USER WITH CREATEDB PASSWORD '$APP_USER_PASS';"
     else
-        log "Utilisateur PostgreSQL '$USER' existe déjà"
+        log "Utilisateur PostgreSQL '$LOCAL_USER' existe déjà"
         # Mise à jour du mot de passe si l'utilisateur existe
-        sudo -u postgres psql -c "ALTER USER $USER PASSWORD '$APP_USER_PASS';"
+        sudo -u postgres psql -c "ALTER USER $LOCAL_USER PASSWORD '$APP_USER_PASS';"
     fi
-    
+
     # Attribution des privilèges (idempotent - PostgreSQL gère la redondance)
-    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE testdb TO $USER;" 2>/dev/null || true
-    
-    log "Configuration PostgreSQL terminée - Base: testdb, Utilisateur: $USER (mot de passe sécurisé)"
+    sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE testdb TO $LOCAL_USER;" 2>/dev/null || true
+
+    log "Configuration PostgreSQL terminée - Base: testdb, Utilisateur: $LOCAL_USER (mot de passe sécurisé)"
 }
 
 # Installation du driver .NET PostgreSQL
@@ -557,7 +574,9 @@ install_postgresql_dotnet_driver() {
 # Test de la connexion PostgreSQL
 test_postgresql_connection() {
     log "Test de la connexion PostgreSQL..."
-    
+
+    LOCAL_USER="$(whoami)"
+
     # Test de connexion basique
     if sudo -u postgres psql -c "SELECT version();" > /dev/null 2>&1; then
         PG_VERSION_INFO=$(sudo -u postgres psql -t -c "SELECT version();" | head -1 | xargs)
@@ -566,12 +585,12 @@ test_postgresql_connection() {
         error "Problème de connexion à PostgreSQL"
         return 1
     fi
-    
+
     # Test de connexion avec l'utilisateur de développement (avec mot de passe sécurisé)
-    if PGPASSWORD="$APP_USER_PASS" psql -h localhost -U "$USER" -d testdb -c "SELECT 1;" > /dev/null 2>&1; then
-        log "Connexion utilisateur '$USER' à la base 'testdb' réussie"
+    if PGPASSWORD="$APP_USER_PASS" psql -h localhost -U "$LOCAL_USER" -d testdb -c "SELECT 1;" > /dev/null 2>&1; then
+        log "Connexion utilisateur '$LOCAL_USER' à la base 'testdb' réussie"
     else
-        warn "Connexion utilisateur '$USER' échouée (normal si première installation)"
+        warn "Connexion utilisateur '$LOCAL_USER' échouée (normal si première installation)"
     fi
 }
 
@@ -603,6 +622,8 @@ EOF
 # Configuration spécifique Ubuntu
 setup_production_ubuntu() {
     log "Configuration spécifique Ubuntu 24.04..."
+
+    LOCAL_USER="$(whoami)"
     
     # UFW est généralement pré-installé sur Ubuntu
     if command -v ufw &> /dev/null; then
@@ -621,39 +642,41 @@ setup_production_ubuntu() {
     fi
     
     # Groupe www-data disponible par défaut
-    sudo usermod -a -G www-data $USER
+    sudo usermod -a -G www-data "$LOCAL_USER"
 }
 
 # Configuration spécifique Debian
 setup_production_debian() {
     log "Configuration spécifique Debian 13..."
-    
+
+    LOCAL_USER="$(whoami)"
+
     # Sur Debian, installer UFW explicitement
     if ! command -v ufw &> /dev/null; then
         log "Installation du firewall UFW..."
         sudo apt install -y ufw
     fi
-    
+
     log "Configuration du firewall UFW..."
     sudo ufw --force enable
     sudo ufw allow ssh/tcp
     sudo ufw allow 80/tcp
     sudo ufw allow 443/tcp
     sudo ufw allow 5000/tcp
-    
+
     # Vérification et configuration du groupe www-data
     if ! getent group www-data &> /dev/null; then
         log "Création du groupe www-data..."
         sudo groupadd www-data
     fi
-    sudo usermod -a -G www-data $USER
-    
+    sudo usermod -a -G www-data "$LOCAL_USER"
+
     # Configuration sudo si nécessaire (spécifique Debian)
     if ! sudo -n true 2>/dev/null; then
         warn "Configuration sudo requise sur Debian"
         warn "Assurez-vous que votre utilisateur est dans le groupe sudo"
-        echo "$USER ALL=(ALL:ALL) ALL" | sudo tee -a /etc/sudoers.d/$USER
-        sudo chmod 440 /etc/sudoers.d/$USER
+        echo "$LOCAL_USER ALL=(ALL:ALL) ALL" | sudo tee -a /etc/sudoers.d/$LOCAL_USER
+        sudo chmod 440 /etc/sudoers.d/$LOCAL_USER
     fi
 }
 
@@ -826,13 +849,16 @@ create_test_project() {
 # Affichage des informations finales
 show_final_info() {
     log "Installation terminée avec succès! (v7.0)"
+
+    LOCAL_USER="$(whoami)"
+
     echo
     echo -e "${BLUE}=== Récapitulatif de l'installation ===${NC}"
     echo "- .NET Version: $(dotnet --version 2>/dev/null || echo 'Non disponible')"
     echo "- F# Compiler: $(dotnet fsc --help 2>/dev/null | head -1 || echo 'Non disponible')"
     echo "- Projet de test: $HOME/fsharp-aspnet-test/${MAIN_PROJECT:-TestApp}"
     echo "- PostgreSQL: $(sudo -u postgres psql -t -c "SELECT version();" 2>/dev/null | head -1 | xargs || echo 'Non disponible')"
-    echo "- Base de données de test: testdb (utilisateur: $USER)"
+    echo "- Base de données de test: testdb (utilisateur: $LOCAL_USER)"
     echo "- Informations de connexion: ~/.fsharp-aspnet-credentials"
     echo
     echo -e "${YELLOW}Pour appliquer les variables d'environnement:${NC}"
@@ -851,7 +877,7 @@ show_final_info() {
     echo "dotnet add package Giraffe && dotnet add package Npgsql.EntityFrameworkCore.PostgreSQL"
     echo
     echo -e "${YELLOW}Connexion PostgreSQL:${NC}"
-    echo "psql -h localhost -U $USER -d testdb"
+    echo "psql -h localhost -U $LOCAL_USER -d testdb"
     echo "# Mot de passe dans ~/.fsharp-aspnet-credentials"
     echo
     echo -e "${YELLOW}Informations complètes de connexion:${NC}"
