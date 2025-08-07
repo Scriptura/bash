@@ -1,0 +1,24 @@
+# Fichiers temporaires et de log
+*.log
+*.tmp
+*.bak
+
+# Credentials générés par le script
+.fsharp-aspnet-credentials
+.pgpass
+
+# Dossiers de test générés
+fsharp-aspnet-test/
+
+# Fichiers de configuration système (ne jamais versionner)
+etc/
+var/
+usr/
+
+# Fichiers de paquets téléchargés
+packages-microsoft-prod.deb
+dotnet-install.sh
+packages-*.deb
+*-install.sh
+
+# Fichiers de compilation .NET
